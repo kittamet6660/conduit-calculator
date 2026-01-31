@@ -4,11 +4,12 @@ import math
 import json
 import os
 
-# --- Config ---
-ADMIN_PASSWORD = "1234"
-DATA_FILE = "iec01_data.json"
+# --- ตั้งค่าระบบ ---
+ADMIN_PASSWORD = "1234"      # รหัสผ่านสำหรับแก้ไข
+DATA_FILE = "iec_data.json"  # ชื่อไฟล์ที่จะบันทึกข้อมูลเก็บไว้
 
-# --- Default Data (ตามมาตรฐาน มอก./IEC 01) ---
+# --- ข้อมูลเริ่มต้น (Default) ---
+# สายไฟ IEC 01 (THW)
 DEFAULT_WIRES = [
     {"sz": 1.5, "od": 3.2}, {"sz": 2.5, "od": 3.8}, {"sz": 4.0, "od": 4.4},
     {"sz": 6.0, "od": 5.0}, {"sz": 10.0, "od": 6.0}, {"sz": 16.0, "od": 7.2},
@@ -18,7 +19,7 @@ DEFAULT_WIRES = [
     {"sz": 300.0, "od": 28.0}, {"sz": 400.0, "od": 32.5}
 ]
 
-# ท่อตามขนาด มม. (Fix ไว้ตามตารางมาตรฐาน ไม่ต้องแก้บ่อย)
+# ขนาดท่อ (mm) ตามมาตรฐาน
 CONDUITS = [
     {"size": "15", "id": 15.8}, {"size": "20", "id": 20.9},
     {"size": "25", "id": 26.6}, {"size": "32", "id": 35.1},
@@ -28,178 +29,193 @@ CONDUITS = [
     {"size": "125", "id": 128.2}, {"size": "150", "id": 154.1}
 ]
 
-# --- Functions ---
+# --- ฟังก์ชันจัดการข้อมูล ---
 def load_data():
+    """โหลดข้อมูลจากไฟล์ JSON ถ้าไม่มีให้ใช้ค่า Default"""
     if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, 'r') as f:
-            return json.load(f)
+        try:
+            with open(DATA_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return DEFAULT_WIRES
     return DEFAULT_WIRES
 
 def save_data(data):
-    with open(DATA_FILE, 'w') as f:
-        json.dump(data, f)
+    """บันทึกข้อมูลลงไฟล์ JSON"""
+    with open(DATA_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
 
-def calculate_max_wires(wire_od, conduit_id, fill_factor=0.40):
+def calc_max_wires(wire_od, conduit_id):
+    """คำนวณจำนวนเส้นสูงสุด (Fill 40%)"""
     wire_area = math.pi * ((wire_od / 2) ** 2)
     conduit_area = math.pi * ((conduit_id / 2) ** 2)
-    max_area = conduit_area * fill_factor
-    return math.floor(max_area / wire_area)
+    usable_area = conduit_area * 0.40  # 40% Standard Fill
+    return math.floor(usable_area / wire_area)
 
-# --- App UI ---
+# --- ส่วนหน้าจอหลัก (UI) ---
 st.set_page_config(page_title="IEC 01 Calculator", layout="wide")
 
 st.title("⚡ IEC 01 Conduit Calculator")
-st.markdown("โปรแกรมคำนวณขนาดท่อร้อยสายตามมาตรฐาน มอก.")
+st.caption("โปรแกรมคำนวณและปรับแต่งมาตรฐานท่อร้อยสาย")
 
-# Initialize Session State
+# โหลดข้อมูลเข้า Session State
 if 'wires' not in st.session_state:
     st.session_state['wires'] = load_data()
 if 'is_admin' not in st.session_state:
     st.session_state['is_admin'] = False
 
-# Tabs
+# สร้าง Tabs
 tab1, tab2 = st.tabs(["🧮 ใช้งานคำนวณ", "🛠️ แก้ไขตาราง (Admin)"])
 
-# === Tab 1: User Calculator ===
+# ==========================================
+# Tab 1: ผู้ใช้งานทั่วไป (User)
+# ==========================================
 with tab1:
-    st.markdown("### คำนวณหาขนาดท่อ")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    # เตรียมข้อมูลสำหรับ Dropdown
-    df_wires = pd.DataFrame(st.session_state['wires'])
-    
-    with col1:
-        st.selectbox("ชนิดสายไฟ", ["IEC 01 (THW-A)"], disabled=True)
-    with col2:
-        selected_sz = st.selectbox("ขนาดสาย (sq.mm.)", df_wires['sz'])
-    with col3:
-        qty = st.number_input("จำนวนเส้น", min_value=1, value=1)
-    
-    # ดึงค่า OD ที่เลือก
-    selected_wire = df_wires[df_wires['sz'] == selected_sz].iloc[0]
-    current_od = selected_wire['od']
-    
-    if st.button("🔍 คำนวณขนาดท่อ", type="primary"):
-        # Logic คำนวณ
-        wire_area = math.pi * ((current_od / 2) ** 2) * qty
-        
-        results = []
-        recommended = None
-        
-        for c in CONDUITS:
-            conduit_area = math.pi * ((c['id'] / 2) ** 2)
-            max_usable = conduit_area * 0.40 # 40% Fill
-            percent_used = (wire_area / conduit_area) * 100
-            
-            status = "❌ แน่นเกินไป"
-            if wire_area <= max_usable:
-                status = "✅ ใช้ได้"
-                if recommended is None:
-                    recommended = c
-            
-            results.append({
-                "ขนาดท่อ (mm)": c['size'],
-                "พื้นที่ใช้งาน (%)": f"{percent_used:.2f}%",
-                "สถานะ": status,
-                "_percent": percent_used # เก็บไว้ sort
-            })
-            
-        # แสดงผล
-        if recommended:
-            st.success(f"✅ **แนะนำให้ใช้ท่อขนาด: {recommended['size']} mm**")
-            st.info(f"พื้นที่หน้าตัดสายรวม: {wire_area:.2f} sq.mm.")
-        else:
-            st.error("❌ ไม่พบขนาดท่อที่รองรับ (จำนวนสายมากเกินไป)")
-            
-        # ตารางรายละเอียด
-        st.markdown("#### ตารางเปรียบเทียบขนาดท่อ")
-        df_res = pd.DataFrame(results)
-        st.dataframe(
-            df_res[["ขนาดท่อ (mm)", "พื้นที่ใช้งาน (%)", "สถานะ"]],
-            hide_index=True,
-            use_container_width=True
-        )
+    # สร้างโหมดการคำนวณ (Radio Button)
+    calc_mode = st.radio(
+        "เลือกโหมดการคำนวณ:",
+        ["🅰️ หาขนาดท่อ (ใส่จำนวนเส้น)", "🅱️ หาจำนวนสาย (ใส่ขนาดท่อ)"],
+        horizontal=True
+    )
+    st.write("---")
 
-# === Tab 2: Admin Calibration ===
+    df_wires = pd.DataFrame(st.session_state['wires'])
+
+    # --- MODE A: หาขนาดท่อ (เหมือนเดิม) ---
+    if calc_mode == "🅰️ หาขนาดท่อ (ใส่จำนวนเส้น)":
+        st.subheader("🅰️ คำนวณหาขนาดท่อที่เหมาะสม")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.selectbox("ชนิดสายไฟ", ["IEC 01 (THW-A)"], disabled=True, key="a_type")
+        with col2:
+            selected_sz = st.selectbox("ขนาดสาย (sq.mm.)", df_wires['sz'], key="a_sz")
+        with col3:
+            qty = st.number_input("จำนวนเส้น", min_value=1, value=1, key="a_qty")
+        
+        current_od = df_wires[df_wires['sz'] == selected_sz].iloc[0]['od']
+        
+        if st.button("🚀 คำนวณขนาดท่อ", type="primary"):
+            wire_area = math.pi * ((current_od / 2) ** 2) * qty
+            results = []
+            best_option = None
+            
+            for c in CONDUITS:
+                conduit_area = math.pi * ((c['id'] / 2) ** 2)
+                max_usable = conduit_area * 0.40
+                percent_used = (wire_area / conduit_area) * 100
+                status = "❌ แน่นเกิน"
+                if wire_area <= max_usable:
+                    status = "✅ ใช้ได้"
+                    if best_option is None: best_option = c
+                
+                results.append({
+                    "ขนาดท่อ (mm)": c['size'],
+                    "พื้นที่ใช้งาน (%)": f"{percent_used:.2f}%",
+                    "สถานะ": status
+                })
+                
+            if best_option:
+                st.success(f"✅ แนะนำท่อขนาด: **{best_option['size']} mm**")
+                st.info(f"พื้นที่หน้าตัดรวม: {wire_area:.2f} sq.mm. (คิดเป็น {(wire_area / (math.pi*((best_option['id']/2)**2)) * 100):.2f}% ของท่อ)")
+            else:
+                st.error("❌ ไม่มีท่อขนาดใดรองรับ")
+            
+            st.dataframe(pd.DataFrame(results), hide_index=True, use_container_width=True)
+
+    # --- MODE B: หาจำนวนสาย (ฟีเจอร์ใหม่) ---
+    else:
+        st.subheader("🅱️ คำนวณหาจำนวนสายสูงสุด")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            # เลือกขนาดสาย
+            selected_sz_b = st.selectbox("เลือกขนาดสาย (sq.mm.)", df_wires['sz'], key="b_sz")
+        with col2:
+            # เลือกขนาดท่อ
+            conduit_options = [c['size'] for c in CONDUITS]
+            selected_conduit_size = st.selectbox("เลือกขนาดท่อ (mm)", conduit_options, key="b_conduit")
+        
+        # ดึงข้อมูล
+        wire_data = df_wires[df_wires['sz'] == selected_sz_b].iloc[0]
+        conduit_data = next(c for c in CONDUITS if c['size'] == selected_conduit_size)
+        
+        if st.button("🔢 คำนวณจำนวนเส้น", type="primary"):
+            # คำนวณ
+            max_wires = calc_max_wires(wire_data['od'], conduit_data['id'])
+            
+            # แสดงผลตัวใหญ่ๆ
+            st.markdown(f"""
+            <div style="text-align: center; padding: 20px; background-color: #e8f5e9; border-radius: 10px; border: 2px solid #4caf50;">
+                <h2 style="color: #2e7d32; margin:0;">ใส่ได้สูงสุด: {max_wires} เส้น</h2>
+                <p style="margin:0; color: #555;">(สำหรับสาย {selected_sz_b} sq.mm. ในท่อ {selected_conduit_size} mm)</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.write("")
+            st.info(f"💡 หมายเหตุ: คำนวณจากพื้นที่หน้าตัดสาย (รวมฉนวน OD {wire_data['od']} mm) เทียบกับ 40% ของพื้นที่ท่อ")
+
+# ==========================================
+# Tab 2: ผู้ดูแลระบบ (Admin & Calibration)
+# ==========================================
 with tab2:
-    st.markdown("### 🛠️ ปรับแต่งค่ามาตรฐาน (Calibration)")
+    st.header("ปรับแต่งค่ามาตรฐาน (Calibration)")
     
-    # Login Section
     if not st.session_state['is_admin']:
-        password = st.text_input("รหัสผ่าน Admin", type="password")
+        pwd = st.text_input("รหัสผ่าน Admin", type="password")
         if st.button("เข้าสู่ระบบ"):
-            if password == ADMIN_PASSWORD:
+            if pwd == ADMIN_PASSWORD:
                 st.session_state['is_admin'] = True
                 st.rerun()
             else:
                 st.error("รหัสผ่านไม่ถูกต้อง")
     else:
-        # Logout Button
         if st.button("ออกจากระบบ", type="secondary"):
             st.session_state['is_admin'] = False
             st.rerun()
             
-        st.warning("💡 **วิธีใช้:** แก้ไขค่า **OD (mm)** ในตารางด้านบน -> ตารางจำนวนเส้นด้านล่างจะคำนวณใหม่ทันที")
+        st.warning("💡 **วิธีจูนค่า:** แก้ไขตัวเลข **OD** ในตารางฝั่งซ้าย -> ตารางผลลัพธ์ฝั่งขวาจะเปลี่ยนทันที")
         
-        col_edit, col_view = st.columns([1, 2])
+        col_editor, col_simulation = st.columns([1, 2])
         
-        # 1. ตารางแก้ไข (Editor)
-        with col_edit:
-            st.markdown("#### 1. แก้ไข OD สายไฟ")
-            df_editor = pd.DataFrame(st.session_state['wires'])
-            
-            # ใช้ st.data_editor เพื่อให้แก้ค่าได้
+        with col_editor:
+            st.subheader("1. แก้ไข OD สายไฟ")
             edited_df = st.data_editor(
-                df_editor,
+                df_wires,
                 column_config={
-                    "sz": "ขนาด (sq.mm)",
-                    "od": st.column_config.NumberColumn("OD (mm)", format="%.2f", min_value=0.1, step=0.1)
+                    "sz": st.column_config.NumberColumn("ขนาด (sq.mm)", disabled=True),
+                    "od": st.column_config.NumberColumn("OD (mm)", format="%.2f", step=0.1)
                 },
                 hide_index=True,
-                num_rows="dynamic",
+                height=600,
                 key="editor"
             )
             
-            # ปุ่มบันทึก
-            if st.button("💾 บันทึกค่าใหม่"):
-                # Convert DataFrame กลับเป็น List of Dict และบันทึก
+            if st.button("💾 บันทึกการเปลี่ยนแปลง"):
                 new_data = edited_df.to_dict('records')
                 st.session_state['wires'] = new_data
                 save_data(new_data)
-                st.success("บันทึกข้อมูลเรียบร้อย!")
-                # st.rerun() # ไม่ต้อง rerun ก็ได้ เพราะ data_editor อัปเดต state แล้ว
+                st.success("บันทึกเรียบร้อย!")
 
-        # 2. ตารางผลลัพธ์ (Simulation View)
-        with col_view:
-            st.markdown("#### 2. ผลลัพธ์จำนวนเส้น (จำลอง)")
-            st.markdown("*เทียบกับตารางมาตรฐาน มอก. (Fill Factor 40%)*")
+        with col_simulation:
+            st.subheader("2. ผลลัพธ์จำนวนเส้น (จำลอง)")
+            st.caption("เทียบกับตารางมาตรฐาน (คำนวณที่ Fill Factor 40%)")
             
-            # สร้างตาราง Matrix: Rows=WireSize, Cols=ConduitSize
-            sim_data = []
-            
-            # ใช้ข้อมูลจาก edited_df (Real-time) มาคำนวณ
+            sim_rows = []
             for index, row in edited_df.iterrows():
-                row_data = {"ขนาดสาย": row['sz']} # Column แรก
-                
+                sim_row = {"ขนาดสาย (mm²)": row['sz']}
                 for c in CONDUITS:
-                    # คำนวณจำนวนเส้นสูงสุด
-                    max_wires = calculate_max_wires(row['od'], c['id'])
-                    # ถ้าเป็น 0 ให้โชว์ -
-                    row_data[c['size']] = max_wires if max_wires > 0 else "-"
-                
-                sim_data.append(row_data)
+                    max_w = calc_max_wires(row['od'], c['id'])
+                    sim_row[c['size']] = max_w if max_w > 0 else "-"
+                sim_rows.append(sim_row)
             
-            df_sim = pd.DataFrame(sim_data)
-            
-            # แสดงตารางแบบ Static (ดูอย่างเดียว)
             st.dataframe(
-                df_sim, 
+                pd.DataFrame(sim_rows),
                 hide_index=True,
-                use_container_width=True
+                use_container_width=True,
+                height=600
             )
-            
-        st.markdown("---")
+
+        st.write("---")
         if st.button("⚠️ รีเซ็ตค่าเริ่มต้น (Factory Reset)"):
             st.session_state['wires'] = DEFAULT_WIRES
             save_data(DEFAULT_WIRES)
